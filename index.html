@@ -461,8 +461,8 @@ function getSmoothColor(value, gradientStops) {
 const valueGradients = {
     0: "#008bff",
     1: "#007bff",
-    6: "#5b08ff",
-    10: "#e30080",
+    8: "#5b08ff",
+    12: "#e30080",
     17: "#ff3030",
     21: "#f09e03",
     27: "#ffef02",
@@ -680,7 +680,7 @@ function updateLines() {
 
 // ====== Incremental node creation ======
 let queue = [{ value: 1, depth: 0, parentValue: null }];
-const maxNodes = 20000000000000000000;
+const maxNodes = 400;
 
 function addNextNodeFromQueue() {
     if (queue.length === 0 || Object.keys(nodes).length >= maxNodes) return;
