@@ -5,24 +5,288 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Collatz Tree Visualiser</title>
-<link rel="stylesheet" href="style.css">
+
+<style>
+body {
+    margin: 0;
+    height: 100vh;
+    overflow: hidden;
+    font-family: sans-serif;
+    background: #111;
+}
+
+#visualiser {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+#scene {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+}
+
+.node {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 13px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    background: #007bff;
+    box-shadow: 0 2px 6px rgba(0,0,0,.4);
+}
+
+.line {
+    position: absolute;
+    height: 2px;
+    background: #666;
+    transform-origin: 0 50%;
+    pointer-events: none;
+}
+
+.node.path {
+    box-shadow: 0 0 10px 3px yellow;
+}
+.line.path {
+    background: yellow;
+}
+
+/* panel */
+#panel {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) scale(.9);
+    background: #222;
+    color: #fff;
+    padding: 12px 16px;
+    border-radius: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transition: .2s;
+    max-width: 90%;
+}
+
+#panel.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) scale(1);
+}
+</style>
 </head>
 
 <body>
 <div id="visualiser">
     <div id="scene"></div>
-
-    <div id="infoPanel">
-        <h2 id="panelTitle"></h2>
-        <button id="closePanel">×</button>
-        <p id="panelSteps"></p>
-        <p id="panelSequenceLabel">Path to 1:</p>
-        <div id="panelSequence"></div>
-    </div>
-
-    <div id="infoOverlay"></div>
+    <div id="panel"></div>
 </div>
 
-<script src="main.js"></script>
+<script>
+"use strict";
+
+/* ===== DOM ===== */
+const visualiser = document.getElementById("visualiser");
+const scene = document.getElementById("scene");
+const panel = document.getElementById("panel");
+
+/* ===== Camera ===== */
+const camera = { x: 0, y: 0, scale: 1 };
+
+function updateCamera() {
+    scene.style.transform =
+        `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`;
+}
+
+(function centerCamera() {
+    const r = visualiser.getBoundingClientRect();
+    camera.x = r.width / 2;
+    camera.y = r.height / 2;
+    updateCamera();
+})();
+
+/* ===== Data ===== */
+const nodes = new Map();
+const links = [];
+let follow = null;
+
+const MAX_NODES = 1200;
+
+/* ===== Collatz ===== */
+const next = n => (n & 1) ? 3 * n + 1 : n >> 1;
+
+function predecessors(n) {
+    const out = [n * 2];
+    if ((n - 1) % 3 === 0) {
+        const p = (n - 1) / 3;
+        if (p > 0 && (p & 1)) out.push(p);
+    }
+    return out;
+}
+
+/* ===== Spatial Hash ===== */
+const CELL = 180;
+const grid = new Map();
+
+function gridKey(x, y) {
+    return ((x / CELL) | 0) + "," + ((y / CELL) | 0);
+}
+
+function rebuildGrid() {
+    grid.clear();
+    for (const n of nodes.values()) {
+        const k = gridKey(n.x, n.y);
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k).push(n);
+    }
+}
+
+/* ===== Physics ===== */
+const REPULSION = 600;
+const ATTRACTION = 0.02;
+const FRICTION = 0.86;
+
+function simulate() {
+    rebuildGrid();
+
+    for (const n of nodes.values()) {
+        const cx = (n.x / CELL) | 0;
+        const cy = (n.y / CELL) | 0;
+
+        for (let gx = cx - 1; gx <= cx + 1; gx++) {
+            for (let gy = cy - 1; gy <= cy + 1; gy++) {
+                const bucket = grid.get(gx + "," + gy);
+                if (!bucket) continue;
+
+                for (const m of bucket) {
+                    if (m === n) continue;
+                    const dx = n.x - m.x;
+                    const dy = n.y - m.y;
+                    const d2 = dx * dx + dy * dy || 1;
+                    const f = REPULSION / d2;
+                    n.vx += dx * f;
+                    n.vy += dy * f;
+                }
+            }
+        }
+    }
+
+    for (const { a, b } of links) {
+        const A = nodes.get(a);
+        const B = nodes.get(b);
+        if (!A || !B) continue;
+        const dx = B.x - A.x;
+        const dy = B.y - A.y;
+        A.vx += dx * ATTRACTION;
+        A.vy += dy * ATTRACTION;
+        B.vx -= dx * ATTRACTION;
+        B.vy -= dy * ATTRACTION;
+    }
+
+    for (const n of nodes.values()) {
+        n.vx *= FRICTION;
+        n.vy *= FRICTION;
+        n.x += n.vx;
+        n.y += n.vy;
+        n.el.style.left = n.x + "px";
+        n.el.style.top = n.y + "px";
+    }
+}
+
+/* ===== Rendering ===== */
+function drawLinks() {
+    scene.querySelectorAll(".line").forEach(l => l.remove());
+
+    for (const { a, b } of links) {
+        const A = nodes.get(a);
+        const B = nodes.get(b);
+        if (!A || !B) continue;
+
+        const dx = B.x - A.x;
+        const dy = B.y - A.y;
+        const d = Math.hypot(dx, dy);
+        const angle = Math.atan2(dy, dx);
+
+        const line = document.createElement("div");
+        line.className = "line";
+        line.style.width = d + "px";
+        line.style.left = A.x + "px";
+        line.style.top = A.y + "px";
+        line.style.transform = `rotate(${angle}rad)`;
+        scene.appendChild(line);
+    }
+}
+
+/* ===== Nodes ===== */
+function createNode(value, parent) {
+    if (nodes.has(value) || nodes.size >= MAX_NODES) return;
+
+    const el = document.createElement("div");
+    el.className = "node";
+    el.textContent = value;
+    scene.appendChild(el);
+
+    const node = {
+        x: (Math.random() - .5) * 600,
+        y: (Math.random() - .5) * 600,
+        vx: 0,
+        vy: 0,
+        el
+    };
+
+    el.onclick = e => {
+        e.stopPropagation();
+        follow = value;
+        panel.textContent = `Value: ${value}`;
+        panel.classList.add("open");
+    };
+
+    nodes.set(value, node);
+
+    if (parent !== null) {
+        links.push({ a: parent, b: value });
+    }
+
+    for (const p of predecessors(value)) {
+        queue.push([p, value]);
+    }
+}
+
+/* ===== Build ===== */
+const queue = [[1, null]];
+
+function expand() {
+    if (!queue.length) return;
+    const [v, p] = queue.shift();
+    createNode(v, p);
+}
+
+/* ===== Loop ===== */
+function loop() {
+    if (Math.random() < 0.6) expand();
+    simulate();
+    drawLinks();
+
+    if (follow && nodes.has(follow)) {
+        const n = nodes.get(follow);
+        camera.x = visualiser.clientWidth / 2 - n.x * camera.scale;
+        camera.y = visualiser.clientHeight / 2 - n.y * camera.scale;
+        updateCamera();
+    }
+
+    requestAnimationFrame(loop);
+}
+
+expand();
+loop();
+</script>
 </body>
 </html>
