@@ -1,0 +1,110 @@
+/* ===== Layout ===== */
+body {
+    font-family: sans-serif;
+    background: #f0f0f0;
+    margin: 0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#visualiser {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #fff;
+    overflow: hidden;
+}
+
+#scene {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+}
+
+/* ===== Nodes & Links ===== */
+.node {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    color: #fff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 14px;
+    position: absolute;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    z-index: 1;
+}
+
+.line {
+    position: absolute;
+    height: 2px;
+    background: #ccc;
+    transform-origin: 0 50%;
+    pointer-events: none;
+}
+
+/* ===== Info Panel ===== */
+#infoPanel {
+    position: absolute;
+    left: 180px;
+    bottom: -60px;
+    width: 340px;
+    background: #222;
+    color: #fff;
+    padding: 16px;
+    border-radius: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, -50%) scale(.8);
+    transition: transform .25s, opacity .25s;
+    z-index: 10;
+}
+
+#infoPanel.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+}
+
+#closePanel {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+#panelSequence {
+    display: flex;
+    overflow-x: auto;
+    background: #111;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+/* ===== Overlay & Highlight ===== */
+#infoOverlay {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#infoOverlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.node.path-highlight {
+    box-shadow: 0 0 10px yellow;
+}
+
+.line.path-highlight {
+    background: yellow;
+}
