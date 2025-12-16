@@ -740,7 +740,7 @@ function addNextNodeFromQueue() {
 // ====== Main loop ======
 function animate() { 
     let adding = false  
-    if (Math.random() < 0.02 * Math.sqrt(Object.keys(nodes).length + 10) && Object.keys(nodes).length < maxNodes) {
+    if (Math.random() < 0.005 * Math.sqrt(Object.keys(nodes).length + 10) && Object.keys(nodes).length < maxNodes) {
         
         addNextNodeFromQueue();
     }
