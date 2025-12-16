@@ -1,0 +1,115 @@
+body {
+    font-family: sans-serif;
+    background: #f0f0f0;
+    margin: 0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#visualiser {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #fff;
+}
+
+#scene {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+}
+
+.node {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    background: #007bff;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 14px;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    z-index: 1;
+}
+
+.node:hover {
+    transform: translate(-50%, -50%) scale(1.1);
+}
+
+.node.path-highlight {
+    box-shadow: 0 0 10px 3px yellow;
+}
+
+.line {
+    position: absolute;
+    height: 2px;
+    background: #ccc;
+    transform-origin: 0 50%;
+    pointer-events: none;
+}
+
+.line.path-highlight {
+    background: yellow;
+}
+
+/* Info panel */
+#infoPanel {
+    position: absolute;
+    left: 180px;
+    bottom: -60px;
+    width: 340px;
+    background: #222;
+    color: white;
+    padding: 16px;
+    border-radius: 8px;
+    transform: translate(-50%, -50%) scale(0.8);
+    opacity: 0;
+    pointer-events: none;
+    transition: 0.25s;
+    z-index: 10;
+}
+
+#infoPanel.open {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    pointer-events: auto;
+}
+
+.panelHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#closePanel {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+#panelSequence {
+    display: flex;
+    align-items: center;
+    overflow-x: auto;
+    background: #111;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+#infoOverlay {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#infoOverlay.visible {
+    pointer-events: auto;
+}
