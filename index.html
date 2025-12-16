@@ -21,6 +21,7 @@ body {
     width: 100%;
     height: 100%;
     background-color: #fff;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     overflow: hidden;
 }
 #scene {
@@ -38,11 +39,19 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
-    font-size: 14px;
+    font-size: 14px;  /* was 14px */
+    line-height: 1.1; /* tighter line height */
+    text-shadow: 0 0 2px rgba(0,0,0,0.5); /* improves readability */
     position: absolute;
     cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: transform 0.1s;
     transform: translate(-50%, -50%);
     z-index: 1;
+}
+.node:hover {
+    transform: translate(-50%, -50%) scale(1.1);
+    background-color: #0056b3;
 }
 .line {
     position: absolute;
@@ -51,152 +60,708 @@ body {
     transform-origin: 0 50%;
     pointer-events: none;
 }
+
+/* Centered popup panel + overlay */
+#infoPanel {
+    position: absolute;
+    bottom: -60px;
+    left: 180px;
+    width: 340px;
+    max-width: 90%;
+    max-height: 80%;
+    background-color: #222;
+    color: #fff;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    transform: translate(-50%, -50%) scale(0.8);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.25s ease-out, opacity 0.25s ease-out, background-color 0.2s ease-out;
+    padding: 16px;
+    box-sizing: border-box;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+    border-radius: 8px;
+}
+#infoPanel.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate(-50%, -50%) scale(1);
+}
+#closePanel {
+    position: absolute;
+    top: 16px;  /* matches panelTitle top padding */
+    right: 16px;
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer;
+    z-index: 11;
+}
+
+#panelTitle {
+    margin: 0 0 0px 0;
+    font-size: 28px;
+}
+#panelSteps {
+    margin: 0 0 4px 0;
+}
+#panelSequenceLabel {
+    margin: 4px 0 2px 0;
+    font-weight: bold;
+}
+#panelSequence {
+    flex: 1;
+    min-height: 60px;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    padding: 12px 8px;
+    background: #111;
+    user-select: none;
+    transform-origin: left center;
+    border-radius: 4px;
+}
+#infoOverlay {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease-out;
+    z-index: 5;
+}
+#infoOverlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Highlighted path lines/nodes */
 .node.path-highlight {
-    box-shadow: 0 0 10px 3px yellow;
+    box-shadow: 0 0 10px 3px rgba(255, 255, 0, 0.9);
 }
 .line.path-highlight {
     background-color: yellow;
 }
 </style>
 </head>
-
 <body>
 <div id="visualiser">
-    <div id="scene"></div>
+  <div id="scene"></div>
+  <div id="infoPanel">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+    <h2 id="panelTitle"></h2>
+    <button id="closePanel">×</button>
+  </div>
+  <p id="panelSteps"></p>
+    <h2 id="panelTitle"></h2>
+    <p id="panelSteps"></p>
+    <p id="panelSequenceLabel">Path to 1:</p>
+    <div id="panelSequence"></div>
+  </div>
+  <div id="infoOverlay"></div>
 </div>
-
 <script>
-// ===== Core =====
-const visualiser = document.getElementById("visualiser");
-const scene = document.getElementById("scene");
+// ====== Core setup ======
+const visualiser = document.getElementById('visualiser');
+const scene = document.getElementById('scene');
+
+const repulsion = -50;
+const attraction = 0.3;
+const friction = 0.8;
 
 let nodes = {};
 let links = [];
 
-// ===== Camera =====
-let camera = { x: 0, y: 0, scale: 1 };
+// camera follow state
+let followNodeId = null;
 
-function updateCamera() {
+// ====== Camera (pan + zoom) ======
+let camera = {
+    x: 0,
+    y: 0,
+    scale: 1
+};
+const minScale = 0.1;
+const maxScale = 5;
+
+function updateCameraTransform() {
     scene.style.transform = `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`;
 }
-camera.x = window.innerWidth / 2;
-camera.y = window.innerHeight / 2;
-updateCamera();
 
-// ===== Collatz =====
+// center world origin roughly in the middle of the viewport at start
+function centerCameraOnOrigin() {
+    const rect = visualiser.getBoundingClientRect();
+    camera.x = rect.width / 2;
+    camera.y = rect.height / 2;
+    camera.scale = 1;
+    updateCameraTransform();
+}
+centerCameraOnOrigin();
+
+// focus camera on a node in world coords; used every frame when following
+function focusCameraOnNode(node) {
+    const rect = visualiser.getBoundingClientRect();
+    camera.x = rect.width / 2 - node.x * camera.scale;
+    camera.y = rect.height / 2 - node.y * camera.scale;
+    updateCameraTransform();
+}
+
+// Mouse panning (disabled while following a node)
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let cameraStart = { x: 0, y: 0 };
+
+visualiser.addEventListener('mousedown', (e) => {
+    if (followNodeId !== null) return; // ignore pan while following
+    isPanning = true;
+    panStart.x = e.clientX;
+    panStart.y = e.clientY;
+    cameraStart.x = camera.x;
+    cameraStart.y = camera.y;
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    const dx = e.clientX - panStart.x;
+    const dy = e.clientY - panStart.y;
+    camera.x = cameraStart.x + dx;
+    camera.y = cameraStart.y + dy;
+    updateCameraTransform();
+});
+
+window.addEventListener('mouseup', () => {
+    isPanning = false;
+});
+
+// clicking empty background cancels follow + closes panel if open
+visualiser.addEventListener('click', (e) => {
+    if (e.target === visualiser || e.target === scene) {
+        followNodeId = null;
+        closePanel();
+    }
+});
+
+// Touch panning + pinch zoom
+let pinchStartDist = 0;
+let pinchStartScale = 1;
+let touchPanActive = false;
+
+function getTouchDistance(t1, t2) {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.hypot(dx, dy);
+}
+
+visualiser.addEventListener('touchstart', (e) => {
+    if (followNodeId !== null) return; // disable manual pan/zoom while following
+    if (e.touches.length === 1) {
+        touchPanActive = true;
+        panStart.x = e.touches[0].clientX;
+        panStart.y = e.touches[0].clientY;
+        cameraStart.x = camera.x;
+        cameraStart.y = camera.y;
+    } else if (e.touches.length === 2) {
+        touchPanActive = false;
+        pinchStartDist = getTouchDistance(e.touches[0], e.touches[1]);
+        pinchStartScale = camera.scale;
+    }
+}, { passive: false });
+
+visualiser.addEventListener('touchmove', (e) => {
+    if (followNodeId !== null) return;
+    if (e.touches.length === 1 && touchPanActive) {
+        const dx = e.touches[0].clientX - panStart.x;
+        const dy = e.touches[0].clientY - panStart.y;
+        camera.x = cameraStart.x + dx;
+        camera.y = cameraStart.y + dy;
+        updateCameraTransform();
+    } else if (e.touches.length === 2) {
+        e.preventDefault();
+        const dist = getTouchDistance(e.touches[0], e.touches[1]);
+        let newScale = pinchStartScale * (dist / pinchStartDist);
+        newScale = Math.min(maxScale, Math.max(minScale, newScale));
+
+        const rect = visualiser.getBoundingClientRect();
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+
+        const factor = newScale / camera.scale;
+
+        camera.x = midX - (midX - camera.x) * factor;
+        camera.y = midY - (midY - camera.y) * factor;
+        camera.scale = newScale;
+
+        updateCameraTransform();
+    }
+}, { passive: false });
+
+visualiser.addEventListener('touchend', (e) => {
+    if (e.touches && e.touches.length === 0) {
+        touchPanActive = false;
+    }
+}, { passive: false });
+
+// Wheel zoom around cursor (disabled while following)
+visualiser.addEventListener('wheel', (e) => {
+    if (followNodeId !== null) return;
+    e.preventDefault();
+    const scaleFactor = e.deltaY < 0 ? 1.05 : 0.95;
+    const newScale = Math.min(maxScale, Math.max(minScale, camera.scale * scaleFactor));
+    const factor = newScale / camera.scale;
+
+    const rect = visualiser.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    camera.x = cx - (cx - camera.x) * factor;
+    camera.y = cy - (cy - camera.y) * factor;
+    camera.scale = newScale;
+    updateCameraTransform();
+}, { passive: false });
+
+// ====== Collatz helpers ======
 function predecessors(n) {
-    const out = [n * 2];
+    const preds = [n * 2];
     if ((n - 1) % 3 === 0) {
         const p = (n - 1) / 3;
-        if (p > 0 && p % 2) out.push(p);
-    }
-    return out;
-}
-
-// ===== Biased queue selection =====
-function pickBiasedFromQueue(queue) {
-    const bias = 1.25; // ↑ = more low-value nodes
-
-    let total = 0;
-    const weights = [];
-
-    for (let i = 0; i < queue.length; i++) {
-        const v = queue[i].value;
-        const w = 1 / Math.pow(Math.log2(v + 2), bias);
-        weights.push(w);
-        total += w;
-    }
-
-    let r = Math.random() * total;
-    for (let i = 0; i < queue.length; i++) {
-        r -= weights[i];
-        if (r <= 0) {
-            return queue.splice(i, 1)[0];
+        if (p > 0 && p % 2 !== 0) {
+            preds.push(p);
         }
     }
-    return queue.shift();
+    return preds;
 }
 
-// ===== Node drawing =====
-function createNode(v) {
-    const el = document.createElement("div");
-    el.className = "node";
-    el.textContent = v;
-    scene.appendChild(el);
-    nodes[v].el = el;
+function collatzNext(n) {
+    return n % 2 === 0 ? n / 2 : 3 * n + 1;
 }
 
-function updateNodes() {
-    for (const v in nodes) {
-        const n = nodes[v];
-        n.el.style.left = n.x + "px";
-        n.el.style.top = n.y + "px";
+function collatzPathToOne(start) {
+    const path = [];
+    let n = start;
+    const guard = 10000;
+    let steps = 0;
+    while (n !== 1 && steps < guard) {
+        path.push(n);
+        n = collatzNext(n);
+        steps++;
     }
+    path.push(1);
+    return path;
+}
+
+function buildForwardMap(pathValues) {
+    const edges = {};
+    for (let i = 0; i < pathValues.length - 1; i++) {
+        const a = pathValues[i];
+        const b = pathValues[i + 1];
+        edges[a] = b;
+    }
+    return edges;
+}
+
+// ====== Force simulation ======
+function updateSimulation() {
+    const nodeValues = Object.keys(nodes);
+
+    // Repulsion
+    for (let i = 0; i < nodeValues.length; i++) {
+        const nodeA = nodes[nodeValues[i]];
+        for (let j = i + 1; j < nodeValues.length; j++) {
+            const nodeB = nodes[nodeValues[j]];
+            const dx = nodeA.x - nodeB.x;
+            const dy = nodeA.y - nodeB.y;
+            const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+
+            if (distance < 500) {
+                const force = -repulsion / distance;
+                nodeA.vx += dx * force / distance;
+                nodeA.vy += dy * force / distance;
+                nodeB.vx -= dx * force / distance;
+                nodeB.vy -= dy * force / distance;
+            }
+        }
+    }
+
+    // Attraction along links
+    for (const link of links) {
+        const nodeA = nodes[link.source];
+        const nodeB = nodes[link.target];
+        const dx = nodeA.x - nodeB.x;
+        const dy = nodeA.y - nodeB.y;
+        const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+        const force = (distance - 100) * attraction;
+
+        nodeA.vx -= dx * force / distance;
+        nodeA.vy -= dy * force / distance;
+        nodeB.vx += dx * force / distance;
+        nodeB.vy += dy * force / distance;
+    }
+
+    // Integrate + friction, no viewport clamping
+    for (const value in nodes) {
+        const node = nodes[value];
+        node.vx *= friction;
+        node.vy *= friction;
+        node.x += node.vx;
+        node.y += node.vy;
+    }
+}
+
+// ====== Color helpers ======
+function hexToRgb(hex) {
+    const bigint = parseInt(hex.substring(1), 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return { r, g, b };
+}
+function rgbToHex(r, g, b) {
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+function lerp(start, end, amount) {
+    return start + (end - start) * amount;
+}
+function getSmoothColor(value, gradientStops) {
+    const stops = Object.keys(gradientStops).map(Number).sort((a, b) => a - b);
+    const minValue = stops[0];
+    const maxValue = stops[stops.length - 1];
+    if (value <= minValue) return gradientStops[minValue];
+    if (value >= maxValue) return gradientStops[maxValue];
+
+    let leftStop, rightStop;
+    for (let i = 0; i < stops.length - 1; i++) {
+        if (value >= stops[i] && value <= stops[i + 1]) {
+            leftStop = { value: stops[i], color: gradientStops[stops[i]] };
+            rightStop = { value: stops[i + 1], color: gradientStops[stops[i + 1]] };
+            break;
+        }
+    }
+    if (!leftStop) return gradientStops[maxValue];
+
+    const range = rightStop.value - leftStop.value;
+    const amount = (value - leftStop.value) / range;
+
+    const leftRgb = hexToRgb(leftStop.color);
+    const rightRgb = hexToRgb(rightStop.color);
+
+    const r = Math.round(lerp(leftRgb.r, rightRgb.r, amount));
+    const g = Math.round(lerp(leftRgb.g, rightRgb.g, amount));
+    const b = Math.round(lerp(leftRgb.b, rightRgb.b, amount));
+
+    return rgbToHex(r, g, b);
+}
+
+const valueGradients = {
+    0: "#008bff",
+    1: "#007bff",
+    6: "#5b08ff",
+    10: "#e30080",
+    17: "#ff3030",
+    21: "#f09e03",
+    27: "#ffef02",
+    33: "#40cf09",
+    41: "#018080",
+    50: "#000"
+};
+
+// ====== Path highlighting helpers ======
+let currentPathNodes = [];
+let currentPathEdges = [];
+
+function clearPathHighlight() {
+    currentPathNodes.forEach(v => {
+        if (nodes[v] && nodes[v].element) {
+            nodes[v].element.classList.remove('path-highlight');
+        }
+    });
+    currentPathEdges.forEach(edge => {
+        const line = edge.lineEl;
+        if (line) line.classList.remove('path-highlight');
+    });
+    currentPathNodes = [];
+    currentPathEdges = [];
+}
+
+// ====== Side panel elements ======
+const infoPanel = document.getElementById('infoPanel');
+const infoOverlay = document.getElementById('infoOverlay');
+const closePanelBtn = document.getElementById('closePanel');
+const panelTitle = document.getElementById('panelTitle');
+const panelSteps = document.getElementById('panelSteps');
+const panelSequence = document.getElementById('panelSequence');
+
+function openPanel() {
+    infoPanel.classList.add('open');
+    infoOverlay.classList.add('visible');
+}
+function closePanel() {
+    infoPanel.classList.remove('open');
+    infoOverlay.classList.remove('visible');
+    clearPathHighlight();
+    followNodeId = null;
+}
+closePanelBtn.addEventListener('click', closePanel);
+infoOverlay.addEventListener('click', closePanel);
+
+function darkenColor(hex, factor) {
+    const { r, g, b } = hexToRgb(hex);
+    const nr = Math.round(r * factor);
+    const ng = Math.round(g * factor);
+    const nb = Math.round(b * factor);
+    return rgbToHex(nr, ng, nb);
+}
+
+// ====== Panel sequence zoom ======
+let panelZoom = 1;
+panelSequence.addEventListener("wheel", e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const scaleFactor = e.deltaY < 0 ? 1.1 : 0.9;
+    panelZoom = Math.min(3, Math.max(0.5, panelZoom * scaleFactor));
+    panelSequence.style.transform = `scale(${panelZoom})`;
+}, {passive: false});
+
+// Render visual Collatz path inside panel
+function renderPanelPath(path) {
+    panelSequence.innerHTML = '';
+    
+    for (let i = 0; i < path.length; i++) {
+        const n = path[i];
+        const nodeColor = getSmoothColor(Math.log2(n), valueGradients);
+        const span = document.createElement('span');
+        span.textContent = n;
+        span.style.background = nodeColor;
+        span.style.color = "#fff";
+        span.style.width = i === 0 ? "44px" : "34px";
+        span.style.height = i === 0 ? "44px" : "34px";
+        span.style.borderRadius = "50%";
+        span.style.display = "flex";
+        span.style.justifyContent = "center";
+        span.style.alignItems = "center";
+        span.style.margin = "0 6px";
+        span.style.fontSize = i === 0 ? "16px" : "13px";
+        span.style.fontWeight = i === 0 ? "bold" : "normal";
+        span.style.flexShrink = "0";
+        span.style.boxShadow = "0 3px 8px rgba(0,0,0,0.4)";
+        span.style.cursor = "default";
+        panelSequence.appendChild(span);
+
+        // Add connecting line between nodes (except after last)
+        if (i < path.length - 1) {
+            const line = document.createElement('div');
+            line.style.width = "28px";
+            line.style.height = "3px";
+            line.style.backgroundColor = "#666";
+            line.style.borderRadius = "2px";
+            line.style.flexShrink = "0";
+            panelSequence.appendChild(line);
+        }
+    } 
+    
+    // Reset zoom
+    panelZoom = 1;
+    panelSequence.style.transform = "scale(1)";
+}
+
+// ====== Drawing ======
+function createOrUpdateNodeElement(value) {
+    let nodeData = nodes[value];
+    if (!nodeData.element) {
+        const nodeEl = document.createElement('div');
+        nodeEl.classList.add('node');
+        nodeEl.textContent = value;
+        const baseColor = getSmoothColor(Math.log2(value), valueGradients);
+        nodeEl.style.backgroundColor = baseColor;
+
+        scene.appendChild(nodeEl);
+        nodeData.element = nodeEl;
+        nodeData.vx = nodeData.vx || 0;
+        nodeData.vy = nodeData.vy || 0;
+
+        // Click handler for panel + path + camera follow
+        nodeEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+
+            const v = parseInt(value, 10);
+            const path = collatzPathToOne(v);
+            const steps = path.length - 1;
+
+            // Update panel text
+            panelTitle.textContent = v;
+            panelSteps.textContent = `Steps: ${steps}`;
+            
+            // Theme panel as darkened node color
+            const baseColor = getSmoothColor(Math.log2(v), valueGradients);
+            infoPanel.style.backgroundColor = darkenColor(baseColor, 0.35);
+
+            // Render visual path in panel
+            renderPanelPath(path);
+
+            // Highlight path nodes in main scene
+            clearPathHighlight();
+            currentPathNodes = path.slice();
+            currentPathNodes.forEach(n => {
+                if (nodes[n] && nodes[n].element) {
+                    nodes[n].element.classList.add('path-highlight');
+                }
+            });
+
+            // Highlight edges along the path
+            const forward = buildForwardMap(path);
+            currentPathEdges = [];
+            const allLines = scene.getElementsByClassName('line');
+            for (const aStr in forward) {
+                const a = aStr;
+                const b = String(forward[aStr]);
+                for (let i = 0; i < allLines.length; i++) {
+                    const line = allLines[i];
+                    if (
+                        (line.dataset.a === a && line.dataset.b === b) ||
+                        (line.dataset.a === b && line.dataset.b === a)
+                    ) {
+                        line.classList.add('path-highlight');
+                        currentPathEdges.push({ a, b, lineEl: line });
+                        break;
+                    }
+                }
+            }
+
+            // Reset camera scale to 1.5 and start following this node
+            camera.scale = 1.5;
+            followNodeId = v;
+            focusCameraOnNode(nodeData);
+
+            // Open panel
+            openPanel();
+        });
+    }
+    nodeData.element.style.left = `${nodeData.x}px`;
+    nodeData.element.style.top = `${nodeData.y}px`;
 }
 
 function updateLines() {
-    scene.querySelectorAll(".line").forEach(l => l.remove());
-    for (const l of links) {
-        const a = nodes[l.a];
-        const b = nodes[l.b];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const len = Math.hypot(dx, dy);
+    Array.from(scene.getElementsByClassName('line')).forEach(line => line.remove());
+
+    for (const link of links) {
+        const nodeA = nodes[link.source];
+        const nodeB = nodes[link.target];
+
+        const x1 = nodeA.x;
+        const y1 = nodeA.y;
+        const x2 = nodeB.x;
+        const y2 = nodeB.y;
+
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const distance = Math.hypot(dx, dy);
         const angle = Math.atan2(dy, dx);
 
-        const line = document.createElement("div");
-        line.className = "line";
-        line.style.width = len + "px";
-        line.style.left = a.x + "px";
-        line.style.top = a.y + "px";
+        const line = document.createElement('div');
+        line.classList.add('line');
+        line.style.width = `${distance}px`;
+        line.style.left = `${x1}px`;
+        line.style.top = `${y1}px`;
         line.style.transform = `rotate(${angle}rad)`;
+
+        // Tag line with endpoints for later lookup
+        line.dataset.a = link.source;
+        line.dataset.b = link.target;
+
         scene.appendChild(line);
     }
 }
 
-// ===== Queue expansion =====
-let queue = [{ value: 1, parent: null }];
+// ====== Incremental node creation ======
+let queue = [{ value: 1, depth: 0, parentValue: null }];
+const maxNodes = 20000000000000000000;
 
-function addNode() {
-    if (!queue.length) return;
+function addNextNodeFromQueue() {
+    if (queue.length === 0 || Object.keys(nodes).length >= maxNodes) return;
 
-    const cur = pickBiasedFromQueue(queue);
-    const v = cur.value;
+    const current = queue.shift();
+    const { value, parentValue } = current;
 
-    if (nodes[v]) return;
+    if (nodes[value]) {
+        addNextNodeFromQueue();
+        return;
+    }
 
-    let x = 0, y = 0;
-    if (cur.parent !== null && nodes[cur.parent]) {
-        const p = nodes[cur.parent];
-        const a = Math.random() * Math.PI * 2;
-        x = p.x + Math.cos(a) * 80;
-        y = p.y + Math.sin(a) * 80;
-        links.push({ a: cur.parent, b: v });
+    // Position new node near its parent (or near origin if no parent)
+    let x = 0;
+    let y = 0;
+    if (parentValue !== null && nodes[parentValue]) {
+        const parent = nodes[parentValue];
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 80;
+        x = parent.x + Math.cos(angle) * radius;
+        y = parent.y + Math.sin(angle) * radius;
     } else {
-        x = (Math.random() - 0.5) * 400;
-        y = (Math.random() - 0.5) * 400;
+        const spread = 600;
+        x = (Math.random() - 0.5) * spread;
+        y = (Math.random() - 0.5) * spread;
     }
 
-    nodes[v] = { x, y };
-    createNode(v);
+    nodes[value] = {
+        value,
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        element: null
+    };
+    createOrUpdateNodeElement(value);
 
-    for (const p of predecessors(v)) {
+    if (parentValue !== null) {
+        links.push({ source: parentValue, target: value });
+    }
+
+    const preds = predecessors(value);
+    for (const p of preds) {
         if (!nodes[p]) {
-            queue.push({ value: p, parent: v });
+            queue.push({ value: p, depth: current.depth + 1, parentValue: value });
+        } else {
+            if (!links.some(l =>
+                (l.source === p && l.target === value) ||
+                (l.source === value && l.target === p)
+            )) {
+                links.push({ source: p, target: value });
+            }
         }
+    } 
+}
+
+// ====== Main loop ======
+function animate() { 
+    let adding = false  
+    if (Math.random() < 0.02 * Math.sqrt(Object.keys(nodes).length + 10) && Object.keys(nodes).length < maxNodes) {
+        
+        addNextNodeFromQueue();
     }
-}
 
-// ===== Loop =====
-function loop() {
-    if (Math.random() < 0.25) addNode();
     updateLines();
-    updateNodes();
-    requestAnimationFrame(loop);
+    updateSimulation();
+
+    for (const value in nodes) {
+        createOrUpdateNodeElement(value);
+    }
+
+    // If following a node, keep camera centered on it every frame
+    if (followNodeId !== null && nodes[followNodeId]) {
+        focusCameraOnNode(nodes[followNodeId]);
+    }
+
+    requestAnimationFrame(animate);
 }
 
-addNode();
-loop();
+addNextNodeFromQueue();
+animate();
 </script>
 </body>
 </html>
